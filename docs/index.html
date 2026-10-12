@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>シャドバWB 配信者 登録者推移</title>
+<style>
+  :root { --bg:#fff; --fg:#1f2328; --mute:#656d76; --line:#d0d7de; --card:#f6f8fa; --up:#1a7f37; --down:#cf222e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --mute:#8b949e; --line:#30363d; --card:#161b22; --up:#3fb950; --down:#f85149; } }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,"Hiragino Sans","Yu Gothic",sans-serif }
+  main { max-width:1100px; margin:0 auto; padding:16px }
+  h1 { font-size:20px; margin:0 0 4px } .sub { color:var(--mute); margin:0 0 16px; font-size:12px }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px }
+  select, button, label.chk { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; font:inherit }
+  button.on { border-color:var(--fg) } button { cursor:pointer }
+  .chart { position:relative; height:420px; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px }
+  .grid { display:grid; grid-template-columns:1fr; gap:16px; margin-top:16px }
+  table { width:100%; border-collapse:collapse } th,td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap }
+  th:nth-child(-n+3), td:nth-child(-n+3) { text-align:left } th { color:var(--mute); font-weight:600; cursor:pointer }
+  tr.sel td { background:var(--card) } tbody tr { cursor:pointer }
+  .up { color:var(--up) } .down { color:var(--down) } .tw { overflow-x:auto }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px }
+  p.note { color:var(--mute); font-size:12px }
+</style>
+</head>
+<body>
+<main>
+  <h1>シャドバWB 配信者 YouTube登録者数の推移</h1>
+  <p class="sub" id="asof"></p>
+  <div class="bar">
+    <select id="team"><option value="">全チーム</option></select>
+    <span id="range">
+      <button data-d="90">3ヶ月</button><button data-d="180">6ヶ月</button><button data-d="365">1年</button><button data-d="0" class="on">全期間</button>
+    </span>
+    <label class="chk"><input type="checkbox" id="log"> 対数軸</label>
+    <button id="clear">選択解除</button>
+  </div>
+  <div class="chart"><canvas id="c"></canvas></div>
+  <p class="note">● 実測値(2026/9以前は百人単位に丸めたExcel記録、以降はYouTube API値=上位3桁)。点線は60日以上データが空いた区間。行をクリックでグラフに追加/除外。</p>
+  <div class="grid"><div class="tw"><table id="tbl"><thead><tr>
+    <th data-k="team">チーム</th><th data-k="name">名前</th><th></th><th data-k="latest">登録者数</th><th data-k="d30">30日増</th><th data-k="date">最終更新</th>
+  </tr></thead><tbody></tbody></table></div></div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script>
+const PALETTE = ["#4e79a7","#f28e2b","#e15759","#76b7b2","#59a14f","#edc948","#b07aa1","#ff9da7","#9c755f","#bab0ac"];
+const GAP_MS = 60 * 864e5, DAY = 864e5;
+const csv = t => t.replace(/^﻿/,"").trim().split(/\r?\n/).map(l => l.split(","));
+const toObjs = rows => { const h = rows[0]; return rows.slice(1).map(r => Object.fromEntries(h.map((k,i)=>[k,r[i]]))); };
+
+let chans = [], sel = new Set(), sortKey = "latest", sortDir = -1, rangeDays = 0, chart;
+
+(async () => {
+  const [c, s] = await Promise.all(["data/channels.csv","data/subscribers.csv"].map(u => fetch(u).then(r => r.text())));
+  const pts = {};
+  for (const r of toObjs(csv(s))) (pts[r.key] ||= []).push({ x: new Date(r.date).getTime(), y: +r.subscribers });
+  chans = toObjs(csv(c)).map(ch => {
+    const p = (pts[ch.key] || []).sort((a,b)=>a.x-b.x), last = p[p.length-1];
+    const base = last && [...p].reverse().find(q => q.x <= last.x - 30*DAY);
+    return { ...ch, p, latest: last?.y ?? 0, date: last?.x ?? 0, d30: base ? last.y - base.y : null };
+  }).filter(ch => ch.p.length);
+  chans.forEach((ch,i)=> ch.color = PALETTE[i % PALETTE.length]);
+  chans.slice().sort((a,b)=>b.latest-a.latest).slice(0,6).forEach(ch => sel.add(ch.key));
+
+  const teams = [...new Set(chans.map(c=>c.team))];
+  document.getElementById("team").append(...teams.map(t => new Option(t, t)));
+  const maxDate = Math.max(...chans.map(c=>c.date));
+  document.getElementById("asof").textContent = "最終データ: " + new Date(maxDate).toLocaleDateString("ja-JP");
+
+  chart = new Chart(document.getElementById("c"), {
+    type: "line", data: { datasets: [] },
+    options: { responsive:true, maintainAspectRatio:false, parsing:false, interaction:{mode:"nearest",intersect:false},
+      scales:{ x:{type:"time",time:{unit:"month",displayFormats:{month:"yy/M"},tooltipFormat:"yyyy/M/d"}}, y:{type:"linear",ticks:{callback:v=>v.toLocaleString()}} },
+      plugins:{ legend:{position:"bottom",labels:{usePointStyle:true}}, tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${c.parsed.y.toLocaleString()}`}} } }
+  });
+  const on = (id, ev, f) => document.getElementById(id).addEventListener(ev, f);
+  on("team","change",render); on("log","change",render);
+  on("clear","click",()=>{ sel.clear(); render(); });
+  document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
+    rangeDays = +b.dataset.d; document.querySelectorAll("#range button").forEach(x=>x.classList.toggle("on",x===b)); render(); });
+  document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
+    sortDir = sortKey===th.dataset.k ? -sortDir : -1; sortKey = th.dataset.k; render(); });
+  render();
+})();
+
+function render() {
+  const team = document.getElementById("team").value, maxDate = Math.max(...chans.map(c=>c.date));
+  const min = rangeDays ? maxDate - rangeDays*DAY : -Infinity;
+  const rows = chans.filter(c => !team || c.team === team);
+  chart.data.datasets = rows.filter(c => sel.has(c.key)).map(c => ({
+    label: c.name, data: c.p.filter(q => q.x >= min), borderColor: c.color, backgroundColor: c.color,
+    borderWidth: 2, pointRadius: 3, tension: 0,
+    segment: { borderDash: ctx => ctx.p1.parsed.x - ctx.p0.parsed.x > GAP_MS ? [6,4] : undefined }
+  }));
+  chart.options.scales.y.type = document.getElementById("log").checked ? "logarithmic" : "linear";
+  chart.update();
+
+  rows.sort((a,b) => (a[sortKey] > b[sortKey] ? 1 : -1) * sortDir);
+  document.querySelector("#tbl tbody").innerHTML = rows.map(c => {
+    const d = c.d30, cls = d > 0 ? "up" : d < 0 ? "down" : "";
+    return `<tr class="${sel.has(c.key)?"sel":""}" data-k="${c.key}"><td>${c.team}</td><td>${c.name}</td>
+      <td><span class="dot" style="background:${sel.has(c.key)?c.color:"transparent"};border:1px solid ${c.color}"></span></td>
+      <td>${c.latest.toLocaleString()}</td><td class="${cls}">${d==null?"-":(d>0?"+":"")+d.toLocaleString()}</td>
+      <td>${new Date(c.date).toLocaleDateString("ja-JP")}</td></tr>`;
+  }).join("");
+  document.querySelectorAll("#tbl tbody tr").forEach(tr => tr.onclick = () => {
+    sel.has(tr.dataset.k) ? sel.delete(tr.dataset.k) : sel.add(tr.dataset.k); render(); });
+}
+</script>
+</body>
+</html>
