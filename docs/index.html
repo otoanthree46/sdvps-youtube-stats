@@ -39,7 +39,8 @@
 
   .sec h2 { font-size:14px; margin:18px 0 8px; display:flex; align-items:center; gap:8px }
   .sec h2::before { content:""; width:4px; height:14px; background:var(--accent); transform:skewX(-18deg) }
-  .chart { position:relative; height:520px; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px 8px 6px }
+  .chart { max-height:80vh; overflow-y:auto; background:var(--panel); border:1px solid var(--line); border-radius:6px }
+  .chart-in { position:relative; height:520px; padding:10px 8px 6px }
   .note { color:var(--muted); font-size:12px; margin:8px 0 0 }
 
   .tw { overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:6px; max-height:560px }
@@ -54,7 +55,7 @@
   .up { color:var(--ok) } .down { color:var(--bad) }
   .tm { display:inline-flex; align-items:center; justify-content:center; width:48px; height:22px; border:2px solid; border-radius:6px; font-size:12px; font-weight:700; letter-spacing:.02em }
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:-1px }
-  @media (max-width:800px) { .chart { height:420px } }
+  @media (max-width:800px) { .chart-in { min-height:420px } }
 </style>
 </head>
 <body>
@@ -70,10 +71,11 @@
       <button class="opt" data-d="30">1ヶ月</button><button class="opt" data-d="90">3ヶ月</button><button class="opt" data-d="180">6ヶ月</button><button class="opt" data-d="365">1年</button><button class="opt on" data-d="0">全期間</button>
     </div>
     <button class="opt" id="log">対数軸</button>
+    <button class="opt" id="all">表示中を全員選択</button>
     <button class="opt" id="clear">選択解除</button>
     <span class="period" id="asof"></span>
   </div>
-  <div class="chart"><canvas id="c"></canvas></div>
+  <div class="chart"><div class="chart-in" id="cin"><canvas id="c"></canvas></div></div>
   <p class="note">● 実測値。2026/9以前はExcel記録(百人単位に丸め)、以降はYouTube API値(上位3桁)。点線は60日以上データが空いた区間。左右のラベルは各選手の期間の開始値・終了値。</p>
   <section class="sec"><h2>一覧(クリックでグラフに追加/除外)</h2>
     <div class="tw"><table id="tbl"><thead><tr>
@@ -169,6 +171,7 @@ let chans = [], sel = new Set(), sortKey = "latest", sortDir = -1, rangeDays = 0
   const on = (id, ev, f) => document.getElementById(id).addEventListener(ev, f);
   on("team","change",render);
   on("log","click",e=>{ logScale = !logScale; e.currentTarget.classList.toggle("on", logScale); render(); });
+  on("all","click",()=>{ const t = document.getElementById("team").value; chans.filter(c => !t || c.team === t).forEach(c => sel.add(c.key)); render(); });
   on("clear","click",()=>{ sel.clear(); render(); });
   document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
     rangeDays = +b.dataset.d; document.querySelectorAll("#range button").forEach(x=>x.classList.toggle("on",x===b)); render(); });
@@ -186,6 +189,9 @@ function render() {
     borderWidth: 2, pointRadius: 3, tension: 0,
     segment: { borderDash: ctx => ctx.p1.parsed.x - ctx.p0.parsed.x > GAP_MS ? [6,4] : undefined }
   })).filter(d => d.data.length);
+  // 系列が増えたら縦に伸ばす(ラベルが1行14px必要)。伸びすぎる分は枠内スクロール
+  const n = chart.data.datasets.length;
+  document.getElementById("cin").style.height = Math.max(520, n * 17 + 150) + "px";
   chart.options.scales.y.type = logScale ? "logarithmic" : "linear";
   chart.update();
   store("sel", JSON.stringify([...sel]));
