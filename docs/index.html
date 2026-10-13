@@ -36,6 +36,8 @@
   .opt { background:var(--panel); border:1px solid var(--line); border-radius:4px; padding:5px 12px; cursor:pointer; color:var(--muted); font-weight:600 }
   .opt:hover { color:var(--text) } .opt.on { border-color:var(--accent); color:var(--text) }
   .seg { display:flex; gap:4px }
+  .modes { margin:0 0 6px } .modes .opt { padding:6px 16px; font-size:14px }
+  .modes .opt.on { background:var(--accent); color:#1a1200; border-color:var(--accent) }
 
   .sec h2 { font-size:14px; margin:18px 0 8px; display:flex; align-items:center; gap:8px }
   .sec h2::before { content:""; width:4px; height:14px; background:var(--accent); transform:skewX(-18deg) }
@@ -68,7 +70,10 @@
   <nav class="nav"><a>登録者推移</a></nav>
 </header>
 <main class="wrap">
-  <h1 class="h-title">YouTube登録者数の推移</h1>
+  <h1 class="h-title" id="ttl">YouTube登録者数の推移</h1>
+  <div class="seg modes" id="mode">
+    <button class="opt on" data-m="yt">YouTubeチャンネル登録者</button><button class="opt" data-m="x">Xフォロワー数</button>
+  </div>
   <div class="picker">
     <select class="sel" id="team"><option value="">全チーム</option></select>
     <div class="seg" id="range">
@@ -80,10 +85,10 @@
     <span class="period" id="asof"></span>
   </div>
   <div class="chart"><div class="chart-in" id="cin"><canvas id="c"></canvas></div></div>
-  <p class="note">● 実測値。2026/9以前はExcel記録(百人単位に丸め)、以降はYouTube API値(上位3桁)。点線は60日以上データが空いた区間。左右のラベルは各選手の期間の開始値・終了値。</p>
+  <p class="note" id="note"></p>
   <section class="sec"><h2>一覧(クリックでグラフに追加/除外)</h2>
     <div class="tw"><table id="tbl"><thead><tr>
-      <th></th><th data-k="team">チーム</th><th data-k="name">名前</th><th data-k="latest">登録者数</th><th data-k="d30">30日増</th><th data-k="date">最終更新</th>
+      <th></th><th data-k="team">チーム</th><th data-k="name">名前</th><th data-k="latest" id="thv">登録者数</th><th data-k="d30">30日増</th><th data-k="date">最終更新</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
 </main>
@@ -155,27 +160,36 @@ const endLabels = {
   }
 };
 
+const MODES = {
+  yt: { title:"YouTube登録者数の推移", th:"登録者数", round:true,
+        note:"● 実測値。2026/9以前はExcel記録(百人単位に丸め)、以降はYouTube API値(上位3桁、毎週自動取得)。点線は60日以上データが空いた区間。左右のラベルは各選手の期間の開始値・終了値。" },
+  x:  { title:"Xフォロワー数の推移", th:"フォロワー数", round:false,
+        note:"● 実測値。Excelからの手動更新(API自動取得なし)。点線は60日以上データが空いた区間。左右のラベルは各選手の期間の開始値・終了値。" } };
+let mode = store("mode") === "x" ? "x" : "yt";
 let chans = [], sel = new Set(), sortKey = "latest", sortDir = -1, rangeDays = 0, logScale = false, chart;
 
 (async () => {
-  const [c, s] = await Promise.all(["data/channels.csv","data/subscribers.csv"].map(u => fetch(u).then(r => r.text())));
-  const pts = {};
-  for (const r of toObjs(csv(s))) (pts[r.key] ||= []).push({ x: new Date(r.date).getTime(), y: r10(+r.subscribers) });
+  const [c, s, xs] = await Promise.all(["data/channels.csv","data/subscribers.csv","data/x_followers.csv"].map(u => fetch(u).then(r => r.ok ? r.text() : "")));
+  const load = (text, col, rnd) => { const pts = {};
+    if (text) for (const r of toObjs(csv(text))) (pts[r.key] ||= []).push({ x: new Date(r.date).getTime(), y: rnd ? r10(+r[col]) : +r[col] });
+    return pts; };
+  const series = { yt: load(s, "subscribers", true), x: load(xs, "followers", false) };
   chans = toObjs(csv(c)).map(ch => {
-    const p = (pts[ch.key] || []).sort((a,b)=>a.x-b.x), last = p[p.length-1];
-    const base = last && [...p].reverse().find(q => q.x <= last.x - 30*DAY);
-    return { ...ch, p, latest: last?.y ?? 0, date: last?.x ?? 0, d30: base ? last.y - base.y : null };
-  }).filter(ch => ch.p.length);
+    const o = { ...ch };
+    for (const m of ["yt", "x"]) {
+      const p = (series[m][ch.key] || []).sort((a,b)=>a.x-b.x), last = p[p.length-1];
+      const base = last && [...p].reverse().find(q => q.x <= last.x - 30*DAY);
+      o[m] = { p, latest: last?.y ?? 0, date: last?.x ?? 0, d30: base ? last.y - base.y : null };
+    }
+    return o;
+  }).filter(ch => ch.yt.p.length || ch.x.p.length);
   chans.forEach((ch,i)=> {
     ch.color = PALETTE[i % PALETTE.length];
     ch.ic = circ(null, ch.name, ch.color);                       // 画像が読めるまで/無い選手は頭文字
     const im = new Image(); im.onload = () => { ch.ic = circ(im, ch.name, ch.color); if (chart) render(); }; im.src = iconUrl(ch.name);
   });
-  try { JSON.parse(store("sel") || "[]").forEach(k => chans.some(c=>c.key===k) && sel.add(k)); } catch {}
-  if (!sel.size) chans.slice().sort((a,b)=>b.latest-a.latest).slice(0,6).forEach(ch => sel.add(ch.key));
-
+  loadSel();
   document.getElementById("team").append(...[...new Set(chans.map(c=>c.team))].map(t => new Option(t, t)));
-  document.getElementById("asof").textContent = "最終データ: " + new Date(Math.max(...chans.map(c=>c.date))).toLocaleDateString("ja-JP");
 
   Chart.defaults.color = "#8b92a1"; Chart.defaults.borderColor = "#262b36";
   chart = new Chart(document.getElementById("c"), {
@@ -190,8 +204,11 @@ let chans = [], sel = new Set(), sortKey = "latest", sortDir = -1, rangeDays = 0
   });
   const on = (id, ev, f) => document.getElementById(id).addEventListener(ev, f);
   on("team","change",render);
+  document.querySelectorAll("#mode button").forEach(b => b.onclick = () => {
+    if (b.dataset.m === mode) return;
+    mode = b.dataset.m; store("mode", mode); loadSel(); render(); });
   on("log","click",e=>{ logScale = !logScale; e.currentTarget.classList.toggle("on", logScale); render(); });
-  on("all","click",()=>{ const t = document.getElementById("team").value; chans.filter(c => !t || c.team === t).forEach(c => sel.add(c.key)); render(); });
+  on("all","click",()=>{ const t = document.getElementById("team").value; chans.filter(c => c[mode].p.length && (!t || c.team === t)).forEach(c => sel.add(c.key)); render(); });
   on("clear","click",()=>{ sel.clear(); render(); });
   document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
     rangeDays = +b.dataset.d; document.querySelectorAll("#range button").forEach(x=>x.classList.toggle("on",x===b)); render(); });
@@ -200,10 +217,23 @@ let chans = [], sel = new Set(), sortKey = "latest", sortDir = -1, rangeDays = 0
   render();
 })();
 
+// 選択中の選手は指標ごとに保存。未保存なら最新値の上位6人
+function loadSel() {
+  sel = new Set();
+  try { JSON.parse(store("sel_" + mode) || "[]").forEach(k => chans.some(c => c.key === k && c[mode].p.length) && sel.add(k)); } catch {}
+  if (!sel.size) chans.filter(c => c[mode].p.length).sort((a,b) => b[mode].latest - a[mode].latest).slice(0, 6).forEach(c => sel.add(c.key));
+}
+
 function render() {
-  const team = document.getElementById("team").value, maxDate = Math.max(...chans.map(c=>c.date));
+  const M = MODES[mode], team = document.getElementById("team").value;
+  document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.m === mode));
+  document.getElementById("ttl").textContent = M.title; document.getElementById("note").textContent = M.note;
+  document.getElementById("thv").textContent = M.th;
+  const has = chans.filter(c => c[mode].p.length);
+  const maxDate = Math.max(...has.map(c => c[mode].date));
+  document.getElementById("asof").textContent = "最終データ: " + new Date(maxDate).toLocaleDateString("ja-JP");
   const min = rangeDays ? maxDate - rangeDays*DAY : -Infinity;
-  const rows = chans.filter(c => !team || c.team === team);
+  const rows = has.filter(c => !team || c.team === team).map(c => ({ ...c, ...c[mode], key: c.key }));
   chart.data.datasets = rows.filter(c => sel.has(c.key)).map(c => ({
     label: c.name, ic: c.ic, data: c.p.filter(q => q.x >= min), borderColor: c.color, backgroundColor: c.color,
     borderWidth: 2, pointRadius: 3, tension: 0,
@@ -214,7 +244,7 @@ function render() {
   document.getElementById("cin").style.height = Math.max(520, n * 17 + 150) + "px";
   chart.options.scales.y.type = logScale ? "logarithmic" : "linear";
   chart.update();
-  store("sel", JSON.stringify([...sel]));
+  store("sel_" + mode, JSON.stringify([...sel]));
 
   rows.sort((a,b) => (a[sortKey] > b[sortKey] ? 1 : -1) * sortDir);
   document.querySelector("#tbl tbody").innerHTML = rows.map(c => {

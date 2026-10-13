@@ -28,7 +28,7 @@ channels = read(CHANNELS)
 
 changed = False
 for c in channels:
-    if not c["channel_id"]:
+    if not c["channel_id"] and c["handle"]:  # YouTube未開設の選手(handleも空)は対象外
         items = call(part="id", forHandle=c["handle"]).get("items", [])
         if items:
             c["channel_id"], changed = items[0]["id"], True

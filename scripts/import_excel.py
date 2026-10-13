@@ -1,4 +1,4 @@
-﻿"""Excel(シャドバPSシート 40行目以降) -> docs/data/channels.csv, docs/data/subscribers.csv
+"""Excel(シャドバPSシート 40行目以降) -> docs/data/channels.csv, docs/data/subscribers.csv
 読むのは「シャドバPS」シートのみ。1行目がdatetimeの列=登録者数、それ以外(差分列・Twitter期の文字列見出し)は無視。
 usage: python -I scripts/import_excel.py <xlsx path>
 """

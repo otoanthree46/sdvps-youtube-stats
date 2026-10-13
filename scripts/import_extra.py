@@ -1,4 +1,4 @@
-﻿"""追加データ.xlsx(Sheet1)を取り込む。既存チャンネルは日付別の値を追記、未登録チャンネルはチーム「参考」で新規登録。
+"""追加データ.xlsx(Sheet1)を取り込む。既存チャンネルは日付別の値を追記、未登録チャンネルはチーム「参考」で新規登録。
 照合: URLのchannel_id → @handle → 名前(既存のみ)の順。既存と同じ(date,key)は追記しない。
 usage: python -I scripts/import_extra.py <xlsx path>
 """
