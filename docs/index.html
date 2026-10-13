@@ -54,6 +54,10 @@
   td.name { font-weight:700 }
   .up { color:var(--ok) } .down { color:var(--bad) }
   .tm { display:inline-flex; align-items:center; justify-content:center; width:48px; height:22px; border:2px solid; border-radius:6px; font-size:12px; font-weight:700; letter-spacing:.02em }
+  .av { position:relative; display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:50%; overflow:hidden;
+    background:#2a3040; color:#cbd2e0; font-weight:700; font-size:12px; vertical-align:middle; margin-right:8px; flex:none }
+  .av img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover }
+  td.name { display:table-cell } td.name .nm { display:flex; align-items:center }
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:-1px }
   @media (max-width:800px) { .chart-in { min-height:420px } }
 </style>
@@ -87,10 +91,19 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script>
 const PALETTE = ["#e8b13a","#56c2e6","#e0707b","#6cc28f","#b79cf0","#ff9d5c","#7fd1c7","#f2d16b","#d98ac4","#9fb1c9"];
-const GAP_MS = 60 * 864e5, DAY = 864e5, LABEL_W = 138;
+const GAP_MS = 60 * 864e5, DAY = 864e5, LABEL_W = 166, IC = 20;
 const csv = t => t.replace(/^﻿/,"").trim().split(/\r?\n/).map(l => l.split(","));
 const toObjs = rows => { const h = rows[0]; return rows.slice(1).map(r => Object.fromEntries(h.map((k,i)=>[k,r[i]]))); };
 const fmt = n => n.toLocaleString();
+const iconUrl = name => `icons/${encodeURIComponent(name)}.jpg`;
+// 丸型アイコン(画像があれば画像、なければ頭文字)をcanvasで作る。チャート上のラベルとツールチップで共用
+function circ(img, label, color, size = 24) {
+  const c = document.createElement("canvas"); c.width = c.height = size; const x = c.getContext("2d");
+  x.beginPath(); x.arc(size/2, size/2, size/2, 0, 7); x.closePath(); x.clip();
+  if (img) { const m = Math.min(img.naturalWidth, img.naturalHeight), sx = (img.naturalWidth - m)/2, sy = (img.naturalHeight - m)/2; x.drawImage(img, sx, sy, m, m, 0, 0, size, size); }
+  else { x.fillStyle = color; x.fillRect(0, 0, size, size); x.fillStyle = "#0e1015"; x.font = `700 ${size*.5}px sans-serif`; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText([...label][0], size/2, size/2 + 1); }
+  return c;
+}
 const r10 = n => n < 1000 ? Math.round(n / 10) * 10 : n;   // 1,000未満は10の位までに四捨五入
 // チームバッジの配色(shadowverse-reference.com に準拠)[背景, 枠・文字]
 const TEAMS = { CR:["#d4d4d8","#e11919"], DFM:["#d4d4d8","#2567fd"], LVH:["#000","#8fc31f"], MRG:["#000","#f91711"],
@@ -126,9 +139,11 @@ const endLabels = {
         const x0 = side === "left" ? y.left - 6 : a.right + 8;
         ctx.fillStyle = it.d.borderColor; ctx.globalAlpha = 1;
         const val = fmt(it.p.y); let name = it.d.label, text = `${name} ${val}`;
-        while (ctx.measureText(text).width > LABEL_W && name.length > 1) { name = name.slice(0, -1); text = `${name}… ${val}`; }
+        while (ctx.measureText(text).width > LABEL_W - IC - 6 && name.length > 1) { name = name.slice(0, -1); text = `${name}… ${val}`; }
         ctx.textAlign = side === "left" ? "right" : "left";
-        ctx.fillText(text, x0, it.y);
+        const ic = it.d.ic, tw = ctx.measureText(text).width;
+        if (side === "left") { ctx.fillText(text, x0 - IC - 5, it.y); if (ic) ctx.drawImage(ic, x0 - IC, it.y - IC/2, IC, IC); }
+        else { if (ic) ctx.drawImage(ic, x0, it.y - IC/2, IC, IC); ctx.fillText(text, x0 + IC + 5, it.y); }
         // 点から端までの引き出し線
         ctx.globalAlpha = .35; ctx.strokeStyle = it.d.borderColor; ctx.setLineDash([2, 3]); ctx.beginPath();
         if (side === "left") { ctx.moveTo(a.left, it.py); ctx.lineTo(it.px, it.py); } else { ctx.moveTo(it.px, it.py); ctx.lineTo(a.right, it.py); }
@@ -151,7 +166,11 @@ let chans = [], sel = new Set(), sortKey = "latest", sortDir = -1, rangeDays = 0
     const base = last && [...p].reverse().find(q => q.x <= last.x - 30*DAY);
     return { ...ch, p, latest: last?.y ?? 0, date: last?.x ?? 0, d30: base ? last.y - base.y : null };
   }).filter(ch => ch.p.length);
-  chans.forEach((ch,i)=> ch.color = PALETTE[i % PALETTE.length]);
+  chans.forEach((ch,i)=> {
+    ch.color = PALETTE[i % PALETTE.length];
+    ch.ic = circ(null, ch.name, ch.color);                       // 画像が読めるまで/無い選手は頭文字
+    const im = new Image(); im.onload = () => { ch.ic = circ(im, ch.name, ch.color); if (chart) render(); }; im.src = iconUrl(ch.name);
+  });
   try { JSON.parse(store("sel") || "[]").forEach(k => chans.some(c=>c.key===k) && sel.add(k)); } catch {}
   if (!sel.size) chans.slice().sort((a,b)=>b.latest-a.latest).slice(0,6).forEach(ch => sel.add(ch.key));
 
@@ -166,7 +185,8 @@ let chans = [], sel = new Set(), sortKey = "latest", sortDir = -1, rangeDays = 0
       scales:{ x:{type:"time",time:{unit:"month",displayFormats:{month:"yy/M"},tooltipFormat:"yyyy/M/d"},grid:{color:"#1d212b"}},
                y:{type:"linear",ticks:{callback:v=>fmt(v)},grid:{color:"#1d212b"}} },
       plugins:{ legend:{display:false}, tooltip:{backgroundColor:"#1b1f28",borderColor:"#262b36",borderWidth:1,titleColor:"#e6e8ee",bodyColor:"#e6e8ee",
-        callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.parsed.y)}`}} } }
+        usePointStyle:true, boxWidth:22, boxHeight:22, boxPadding:4, padding:8,
+        callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.parsed.y)}`, labelPointStyle:c=>({pointStyle:c.dataset.ic||"circle", rotation:0})}} } }
   });
   const on = (id, ev, f) => document.getElementById(id).addEventListener(ev, f);
   on("team","change",render);
@@ -185,7 +205,7 @@ function render() {
   const min = rangeDays ? maxDate - rangeDays*DAY : -Infinity;
   const rows = chans.filter(c => !team || c.team === team);
   chart.data.datasets = rows.filter(c => sel.has(c.key)).map(c => ({
-    label: c.name, data: c.p.filter(q => q.x >= min), borderColor: c.color, backgroundColor: c.color,
+    label: c.name, ic: c.ic, data: c.p.filter(q => q.x >= min), borderColor: c.color, backgroundColor: c.color,
     borderWidth: 2, pointRadius: 3, tension: 0,
     segment: { borderDash: ctx => ctx.p1.parsed.x - ctx.p0.parsed.x > GAP_MS ? [6,4] : undefined }
   })).filter(d => d.data.length);
@@ -201,7 +221,7 @@ function render() {
     const d = c.d30, cls = d > 0 ? "up" : d < 0 ? "down" : "", on = sel.has(c.key);
     return `<tr class="${on?"sel":""}" data-k="${c.key}">
       <td><span class="dot" style="background:${on?c.color:"transparent"};border:1px solid ${c.color}"></span></td>
-      <td>${teamBadge(c.team)}</td><td class="name">${c.name}</td>
+      <td>${teamBadge(c.team)}</td><td class="name"><div class="nm"><span class="av">${[...c.name][0]}<img src="${iconUrl(c.name)}" alt="" onerror="this.remove()"></span>${c.name}</div></td>
       <td>${fmt(c.latest)}</td><td class="${cls}">${d==null?"-":(d>0?"+":"")+fmt(d)}</td>
       <td>${new Date(c.date).toLocaleDateString("ja-JP")}</td></tr>`;
   }).join("");
