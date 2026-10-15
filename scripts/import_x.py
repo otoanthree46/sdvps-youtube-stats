@@ -1,5 +1,5 @@
-"""Xフォロワー数をExcel(シャドバPSシート 2〜39行目)から取り込む(手動更新用)。
-行: A=チーム B=選手名 C=Xのユーザー名 / 1行目が日付の列=フォロワー数(日付でない列・差分列は無視)
+"""Xフォロワー数をExcel(シャドバPSシート 2行目〜最初の空行)から取り込む(手動更新用)。
+行: A=チーム B=選手名 C=Xのユーザー名(URLでも可) / 1行目が日付の列=フォロワー数(日付でない列・差分列は無視)
 - 選手は名前で channels.csv と照合(無ければ新規登録。YouTube未開設なら key="チーム:名前")。x_handle を書き戻す
 - docs/data/x_followers.csv (date,key,followers,source) に、既存と重複しない分だけ追記
 usage: python -I scripts/import_x.py <xlsx path> [sheet]
@@ -27,7 +27,7 @@ have = {(r["date"], r["key"]) for r in csv.DictReader(open(XF, encoding="utf-8-s
 
 out, new = [], []
 for r in rows[1:]:
-    team, name, handle = r[0], r[1], (r[2] or "").strip()
+    team, name, handle = r[0], r[1], (r[2] or "").strip().rstrip("/").split("/")[-1].split("?")[0]  # URL形式でも可
     if not name: break
     team = TEAM.get(team, team)
     c = next((c for c in chans if c["name"] == name), None)
